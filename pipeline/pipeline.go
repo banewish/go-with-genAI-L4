@@ -7,6 +7,8 @@
 // проходили на занятті.
 package pipeline
 
+import "math/rand"
+
 // Generate запускає горутину, що генерує рівно n випадкових цілих
 // чисел у діапазоні [1, 100] і надсилає їх у повернутий канал.
 // Після надсилання n-го числа канал має бути закритий.
@@ -20,8 +22,12 @@ package pipeline
 //     роботу.
 func Generate(n int) <-chan int {
 	out := make(chan int)
-	// TODO: ваш код тут
-	close(out)
+	go func() {
+		defer close(out)
+		for i := 0; i < n; i++ {
+			out <- rand.Intn(100) + 1
+		}
+	}()
 	return out
 }
 
@@ -36,7 +42,13 @@ func Generate(n int) <-chan int {
 //   - закрийте out через defer close(out), коли in вичерпано.
 func Filter(in <-chan int) <-chan int {
 	out := make(chan int)
-	// TODO: ваш код тут
-	close(out)
+	go func() {
+		defer close(out)
+		for v := range in {
+			if v%2 == 0 {
+				out <- v
+			}
+		}
+	}()
 	return out
 }

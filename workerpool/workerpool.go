@@ -5,6 +5,7 @@ package workerpool
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -28,23 +29,55 @@ type Result struct {
 // Job надається не більше timeout часу — якщо job.Fetch не встигає,
 // Result.Err міститиме помилку тайм-ауту (context.DeadlineExceeded).
 //
-// TODO (Завдання 3): реалізуйте цю функцію.
-//   - запустіть рівно numWorkers горутин (використайте sync.WaitGroup,
-//     щоб знати, коли всі вони завершили);
-//   - кожен воркер у циклі `for job := range jobs` для кожного job:
-//   - створює ctx, cancel := context.WithTimeout(context.Background(), timeout)
-//     і викликає job.Fetch(ctx);
-//   - обов'язково викликає cancel() (defer), щоб не тримати таймер;
-//   - надсилає Result{JobID: job.ID, Size: size, Err: err} у results;
-//   - у окремій горутині: після wg.Wait() закрийте results.
+// Реалізація:
+//   - Стартує рівно numWorkers горутин, кожна з wg.Add(1)
+//   - Кожен воркер у циклі `for job := range jobs` для кожного job:
+//     * створює ctx, cancel := context.WithTimeout(context.Background(), timeout)
+//     * викликає job.Fetch(ctx)
+//     * викликає cancel() (без defer, бо потрібно звільнити таймер відразу)
+//     * надсилає Result{JobID: job.ID, Size: size, Err: err} у results
+//   - В окремій горутині чекає wg.Wait() і закриває results
 //
-// Це і є той самий select + time.After / context.WithTimeout
-// патерн проти витоку горутин, який ми проходили на занятті —
-// різниця лише в тому, що тут скасування кооперативне: Fetch сам
-// перевіряє ctx.Done() (дивіться приклад slowFetch у тестах).
+// Це реалізація select + time.After / context.WithTimeout патерну
+// проти витоку горутин. Скасування кооперативне: Fetch сам перевіряє
+// ctx.Done() (дивіться приклад slowFetch у тестах).
 func RunPool(jobs <-chan Job, numWorkers int, timeout time.Duration) <-chan Result {
 	results := make(chan Result)
-	// TODO: ваш код тут
-	close(results)
+	
+	var wg sync.WaitGroup
+	
+	// Start exactly numWorkers goroutines
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			
+			// Each worker processes jobs from the channel
+			for job := range jobs {
+				// Create context with timeout for this job
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				
+				// Execute the fetch function with timeout
+				size, err := job.Fetch(ctx)
+				
+				// Always cancel to release the timer
+				cancel()
+				
+				// Send result
+				results <- Result{
+					JobID: job.ID,
+					Size:  size,
+					Err:   err,
+				}
+			}
+		}()
+	}
+	
+	// Close results channel after all workers finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	
 	return results
 }
